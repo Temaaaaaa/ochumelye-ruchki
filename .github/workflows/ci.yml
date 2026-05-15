@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - develop
+      - qa
+      - master
+      - main
+
+jobs:
+  quality:
+    if: >
+      github.event_name == 'pull_request' ||
+      contains(fromJSON('["develop","qa","master","main"]'), github.ref_name)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: xdebug
+          extensions: mbstring, pdo_sqlite, sqlite3
+
+      - name: Setup Composer cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Prepare CI environment
+        run: cp .env.ci .env
+
+      - name: Run migrations
+        run: php artisan migrate --force
+
+      - name: Tests with coverage gate
+        run: composer test:coverage
+
+      - name: Static analysis
+        run: composer analyse
+
+      - name: Lint check
+        run: composer lint
+
+      - name: Simulate deployment environment
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            develop) env_file=".env.dev" ;;
+            qa) env_file=".env.uat" ;;
+            master|main) env_file=".env.prod" ;;
+            *) echo "No deployment simulation for ${GITHUB_REF_NAME}"; exit 0 ;;
+          esac
+
+          cp "${env_file}" .env
+
+          php -r '
+            $required = ["APP_NAME", "APP_ENV", "APP_DEBUG", "APP_URL", "DB_CONNECTION", "DB_HOST", "DB_PORT", "DB_DATABASE", "DB_USERNAME", "DB_PASSWORD", "APP_KEY"];
+            $env = parse_ini_file(".env", false, INI_SCANNER_RAW);
+            foreach ($required as $key) {
+                if (! array_key_exists($key, $env)) {
+                    fwrite(STDERR, "Missing required variable: {$key}\n");
+                    exit(1);
+                }
+            }
+          '
+
+          php artisan config:clear
+          php artisan config:cache
+
+  auto-format:
+    if: >
+      github.event_name == 'push' &&
+      ! contains(fromJSON('["develop","qa","master","main"]'), github.ref_name)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Auto-format code
+        run: composer lint:fix
+
+      - name: Commit formatting changes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No formatting changes."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "style: apply Laravel Pint formatting"
+          git push
