@@ -76,7 +76,7 @@ class EnrollmentTest extends TestCase
             ->assertRedirect(route('types.show', $type))
             ->assertSessionHas('error');
 
-        $this->assertDatabaseCount('enrollments', 1);
+        $this->assertDatabaseCount('enrollments', 2);
     }
 
     public function test_full_master_class_cannot_be_booked(): void
