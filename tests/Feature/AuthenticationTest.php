@@ -13,8 +13,7 @@ class AuthenticationTest extends TestCase
     use RefreshDatabase;
 
     public function test_guest_can_open_auth_pages(): void
-    {
-        $this->get(route('login'))->assertOk();
+                {$this->get(route('login'))->assertOk();
         $this->get(route('register'))->assertOk();
     }
 
